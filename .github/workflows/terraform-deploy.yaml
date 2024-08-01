@@ -38,6 +38,6 @@ jobs:
       default_tfvars: "tenants/prod-lza/defaults.tfvars"
       plan: true
       apply: true
-      TF_BUCKET: "terraform-state-the-badger-project"
+      TF_BUCKET: ""
       terraform_version: "1.9.0"
-      OIDC_ACCOUNT_ID: "283740801225"
+      OIDC_ACCOUNT_ID: ""
