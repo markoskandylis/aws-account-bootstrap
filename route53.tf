@@ -1,6 +1,6 @@
 module "tenant_zones" {
   count  = length(local.tenant_zones) > 0 ? 1 : 0
-  source = "git@github.com:The-Stinky-Badger/terraform-aws-route53.git//modules/zones?ref=master"
+  source = "../modules/zones"
 
   zones = local.tenant_zones
 
