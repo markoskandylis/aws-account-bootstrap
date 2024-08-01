@@ -1,0 +1,183 @@
+name: Terraform Deploy
+
+on:
+  workflow_call:
+    inputs:
+      # Generic Terraform Inputs
+      terraform_version:
+        required: false
+        default: "1.9.0"
+        type: string
+      # Terraform Backend and Roles
+      TF_BUCKET:
+        required: true
+        type: string
+      OIDC_ACCOUNT_ID:
+        required: true
+        type: string
+      REGION:
+        required: false
+        type: string
+        default: eu-west-2
+      # Environment setting
+      lza_environment:
+        required: true
+        type: string
+      tenant:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      # Adding Extra variables to terraform
+      parameters:
+        type: string
+        required: false
+      # Account Deployment Workspace - Each account has its own workspace and state
+      # We can modify the backend to group tenants with accounts/states (i will work on organising that a bit better)
+      workspace:
+        type: string
+        required: false
+      # Extra terraform command line arguments (this functionality will be added)
+      terraform-args:
+        type: string
+        required: false
+        description: "Additional arguments to pass to terraform"
+      default_tfvars:
+        type: string
+        required: false
+        description: "Additional Defualt tfvar file"
+      # Terraform Actions
+      plan:
+        type: boolean
+        required: false
+      apply:
+        type: boolean
+        required: false
+      # Account destructions
+      destroy:
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  terraform-plan:
+    name: Plan Terraform
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && inputs.plan
+    env:
+      OUTPUT_PATH: outputs/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}
+      WORKSPACE_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}.tfvars
+      ACCOUNTS_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/accounts.tfvars
+      LZA_DEFAULT_TFVARS: ${{ inputs.default_tfvars }}
+      S3_PREFIX: "${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Configure AWS IdP Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ inputs.OIDC_ACCOUNT_ID}}:role/github-oidc
+          aws-region: ${{ inputs.REGION }}
+          role-session-name: GitHubActions
+          retry-max-attempts: 5
+
+      - name: Create output folder
+        id: create_folder
+        run: mkdir -p ./${{ env.OUTPUT_PATH }}
+
+      - name: Create terraform.tfvars file
+        run: echo '${{ inputs.parameters }}' >> terraform.tfvars
+
+      - name: Initialising Terraform
+        run: terraform init -reconfigure -backend-config="region=${{ inputs.REGION }}" -backend-config="bucket=${{ inputs.TF_BUCKET }}" -backend-config="key=${{ env.S3_PREFIX }}/${{ inputs.workspace }}.tfstate"
+
+      - name: Validate Terraform configuration
+        run: terraform validate
+
+      - name: Planning with workspaces
+        if: inputs.workspace
+        run: |
+          terraform workspace select -or-create ${{ inputs.workspace }}
+          terraform plan -var-file=terraform.tfvars -var-file="${{ env.WORKSPACE_TFVARS_PATH }}" -var-file="${{ env.ACCOUNTS_TFVARS_PATH }}" -var-file="${{ env.LZA_DEFAULT_TFVARS}}" -out=./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
+          terraform show -json ./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan > ./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan.json
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.workspace }}-plan
+          path: "./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan"
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Display Uploaded Artifacts
+        run: ls -R ./${{ env.OUTPUT_PATH }}
+
+  terraform-apply:
+    name: Apply Terraform
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true && inputs.apply
+    env:
+      OUTPUT_PATH: outputs/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}
+      WORKSPACE_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}.tfvars
+      ACCOUNTS_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/accounts.tfvars
+      LZA_DEFAULT_TFVARS_PATH: ${{ inputs.default_tfvars }}
+      S3_PREFIX: "${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Configure AWS IdP Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ inputs.OIDC_ACCOUNT_ID}}:role/github-oidc
+          aws-region: ${{ inputs.REGION }}
+          role-session-name: GitHubActions
+          retry-max-attempts: 5
+
+      - name: Set up GH_TOKEN
+        run: echo "GH_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
+
+      - name: Retrieve Merged PR Run ID
+        run: |
+          runId=$(gh api "/repos/${{ github.repository }}/actions/runs?head_sha=${{ github.event.pull_request.head.sha }}" --jq '.workflow_runs[] | select(.name == "Bootstrap" and .conclusion == "success") | .id' | head -n 1)
+          if [ -z "$runId" ]; then
+            echo "No successful run found for the merged PR."
+            exit 1
+          fi
+          echo "Retrieved Run ID: $runId"
+          echo "RUN_ID=$runId" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.workspace }}-plan
+          path: "./${{ env.OUTPUT_PATH }}/"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.RUN_ID }}
+
+      - name: Create terraform.tfvars file
+        run: echo '${{ inputs.parameters }}' >> terraform.tfvars
+
+      - name: Initialising Terraform
+        run: terraform init -reconfigure -backend-config="region=${{ inputs.REGION }}" -backend-config="bucket=${{ inputs.TF_BUCKET }}" -backend-config="key=${{ env.S3_PREFIX }}/${{ inputs.workspace }}.tfstate"
+
+      - name: Validate Terraform configuration
+        run: terraform validate
+
+      - name: Applying with workspaces
+        if: inputs.workspace
+        run: |
+          terraform workspace select -or-create ${{ inputs.workspace }}
+          terraform apply ./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan

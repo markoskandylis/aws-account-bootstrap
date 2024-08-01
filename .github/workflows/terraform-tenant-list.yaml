@@ -1,0 +1,41 @@
+name: List Workspaces
+
+on:
+  workflow_call:
+    inputs:
+      lza_environment:
+        required: true
+        type: string
+      tenant:
+        required: false
+        type: string
+      environment:
+        required: false
+        type: string
+    outputs:
+      matrix_jobs:
+        description: "Matrix jobs based on tenant workspaces"
+        value: ${{ jobs.list-workspaces.outputs.matrix_jobs }}
+
+jobs:
+  list-workspaces:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_jobs: ${{ steps.extract-workspaces.outputs.matrix_jobs }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Extract workspaces
+        id: extract-workspaces
+        env:
+          LZA_ENVIRONMENT: ${{ inputs.lza_environment }}
+          TENANT_INPUT: ${{ inputs.tenant }}
+          ENVIRONMENT_INPUT: ${{ inputs.environment }}
+        run: |
+          python3 bootstrap/list_workspaces.py

@@ -1,0 +1,43 @@
+name: Bootstrap
+
+on:
+  pull_request:
+    branches:
+      - main
+  pull_request_target:
+    types:
+      - closed
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+  pull-requests: read
+
+jobs:
+  list-workspaces:
+    uses: ./.github/workflows/terraform-tenant-list.yaml
+    with:
+      lza_environment: "lza"
+      environment: nonprod
+
+  terraform-deploy:
+    needs: list-workspaces
+    uses: ./.github/workflows/terraform-tenant-bootstap.yaml
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJson(needs.list-workspaces.outputs.matrix_jobs) }}
+    with:
+      lza_environment: "prod-lza"
+      tenant: ${{ matrix.job.tenant }}
+      environment: ${{ matrix.job.environment }}
+      workspace: ${{ matrix.job.workspace }}
+      default_tfvars: "tenants/prod-lza/defaults.tfvars"
+      plan: true
+      apply: true
+      TF_BUCKET: "terraform-state-the-badger-project"
+      terraform_version: "1.9.0"
+      OIDC_ACCOUNT_ID: "283740801225"
