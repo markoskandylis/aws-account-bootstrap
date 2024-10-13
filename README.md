@@ -56,3 +56,12 @@ This repository contains a **Matrix Generator** written in Python that automates
 The matrix-generator.py script scans the directory structure for .tfvars files. Based on the tenant, environment, and workspace information it finds, it creates a matrix that defines the jobs for the deployment. This matrix is then passed into the GitHub Actions workflows.
 
 This project uses Terraform workspaces. The pipelines will create the relevant workspaces and initialize the backend for the different environments.
+
+## Input Descriptions
+
+- **tenant_name**: Specifies the tenant to target for the deployment. If not provided, the script will scan and deploy to all tenants available in the folder structure.
+- **tenant_environment**: Specifies the environment (e.g., `prod`, `nonprod`, `dev`) to target for the deployment. If not provided, it will deploy across all environments for the selected tenant(s).
+
+- **config_path**: The path to the directory containing the configuration files. This is where the script will look for the necessary Terraform configurations and `.tfvars` files.
+
+- **workspace_name**: Specifies a specific Terraform workspace for deployment. If not provided, the script will deploy to all workspaces within the selected tenant and environment.

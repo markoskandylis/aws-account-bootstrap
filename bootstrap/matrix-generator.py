@@ -7,6 +7,7 @@ import uuid
 config_path = os.getenv("config_path", "./")
 tenant_name = os.getenv("tenant_name", "")
 tenant_environment = os.getenv("tenant_environment", "")
+workspace_name = os.getenv("workspace_name", "")
 
 enviroment_values = ["dev", "test", "prod", "nonprod"]
 accounts_files = []
@@ -61,15 +62,15 @@ def process_accounts_file(accounts_file):
                 continue
             match = workspace_pattern.match(line)
             if match:
-                workspace_name = match.group(1)
-                print(f"Found workspace: '{workspace_name}'")
+                workspace = match.group(1)
+                print(f"Found workspace: '{workspace}'")
                 # Adjusting the comparison logic for partial match
-                if (not tenant or tenant.startswith(tenant)) and (not environment or environment == environment):
+                if (not tenant or tenant.startswith(tenant)) and (not environment or environment == environment) and (not workspace_name or workspace_name == workspace):
                     print(f"Adding job: tenant={tenant}, environment={environment}, workspace={workspace_name}")
                     matrix_jobs.append({
                         'tenant': tenant,
                         'environment': environment,
-                        'workspace': workspace_name,
+                        'workspace': workspace,
                         'tfvars_path': tfvars_path
                     })
 

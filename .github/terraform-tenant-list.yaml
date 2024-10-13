@@ -9,6 +9,9 @@ on:
       tenant_environment:
         required: false
         type: string
+      workspace_name:
+        required: false
+        type: string
       config_path:
         required: false
         type: string
@@ -37,5 +40,7 @@ jobs:
           tenant_name: ${{ inputs.tenant_name }}
           tenant_environment: ${{ inputs.tenant_environment }}
           config_path: ${{ inputs.config_path }}
+          workspace_name: ${{ inputs.workspace_name }}
         run: |
-          python3 bootstrap/list_workspaces.py
+          python3 bootstrap/matrix-generator.py
+

@@ -257,6 +257,8 @@ jobs:
         working-directory: ${{ inputs.terraform-working-directory }}
         if: inputs.workspace
         run: |
+          pwd
+          ls -al
           terraform workspace select -or-create ${{ inputs.workspace }}
           terraform apply ${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
 
