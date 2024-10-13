@@ -18,7 +18,7 @@ This repository contains a **Matrix Generator** written in Python that automates
 .
 ├── .github
 │   └── workflows
-│       ├── actions          # Pipeline to deploy infrastructure
+│       ├── actions          # composite actions for terraform
 │       │   ├──terraform-init
 │       │   └── action.yaml
 │       ├── terraform-deploy.yaml          # Pipeline to deploy infrastructure
