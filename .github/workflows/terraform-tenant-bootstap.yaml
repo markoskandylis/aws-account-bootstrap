@@ -1,5 +1,4 @@
 name: Terraform Deploy
-
 on:
   workflow_call:
     inputs:
@@ -9,6 +8,23 @@ on:
         default: "1.9.0"
         type: string
       # Terraform Backend and Roles
+      terraform-working-directory:
+        description: 'The path to the directory containing Terraform files'
+        required: false
+        type: string
+      account-vars-base-directory:
+        description: 'The path to the directory containing Terraform variables files'
+        required: false
+        type: string
+        default: '.'
+      tfvars_path:
+          description: 'The path to the directory containing Terraform files'
+          required: true
+          type: string
+      workspace_key_prefix:
+          description: 'Workspaces Key prefix to oganise the statefiles'
+          required: false
+          type: string
       TF_BUCKET:
         required: true
         type: string
@@ -19,15 +35,19 @@ on:
         required: false
         type: string
         default: eu-west-2
+      INIT_ROLE_ARN:
+        description: 'Role for terraform init'
+        required: false
+        type: string
       # Environment setting
-      lza_environment:
-        required: true
+      base_path:
+        required: false
         type: string
       tenant:
         required: true
         type: string
       environment:
-        required: true
+        required: false
         type: string
       # Adding Extra variables to terraform
       parameters:
@@ -43,10 +63,10 @@ on:
         type: string
         required: false
         description: "Additional arguments to pass to terraform"
-      default_tfvars:
+      other_tfvars:
         type: string
         required: false
-        description: "Additional Defualt tfvar file"
+        description: "Additional  tfvar file"
       # Terraform Actions
       plan:
         type: boolean
@@ -59,18 +79,25 @@ on:
         type: boolean
         required: false
         default: false
+      plan-and-apply:
+        type: boolean
+        required: false
+
+env:
+  OUTPUT_PATH: outputs/${{ inputs.tenant }}/${{ inputs.environment && '/' || '' }}${{ inputs.workspace }}
+  WORKSPACE_TFVARS_PATH: ${{inputs.account-vars-base-directory}}/${{inputs.tfvars_path}}/${{ inputs.workspace }}.tfvars
+  ACCOUNTS_TFVARS_PATH: ${{inputs.account-vars-base-directory}}/${{inputs.tfvars_path}}/accounts.tfvars
+  OTHER_TFVARS: ${{ inputs.other_tfvars }}
+  S3_PREFIX: "${{ inputs.tenant }}/${{ inputs.environment }}"
 
 jobs:
   terraform-plan:
     name: Plan Terraform
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && inputs.plan
-    env:
-      OUTPUT_PATH: outputs/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}
-      WORKSPACE_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}.tfvars
-      ACCOUNTS_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/accounts.tfvars
-      LZA_DEFAULT_TFVARS: ${{ inputs.default_tfvars }}
-      S3_PREFIX: "${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}"
+    defaults:
+      run:
+        shell: bash
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && inputs.plan && !inputs.destroy
     steps:
       - uses: actions/checkout@v4
 
@@ -89,45 +116,99 @@ jobs:
 
       - name: Create output folder
         id: create_folder
-        run: mkdir -p ./${{ env.OUTPUT_PATH }}
+        run: mkdir -p ${{ inputs.terraform-working-directory }}/${{ env.OUTPUT_PATH }}
 
       - name: Create terraform.tfvars file
+        if: inputs.parameters
+        working-directory: ${{ inputs.terraform-working-directory }}
         run: echo '${{ inputs.parameters }}' >> terraform.tfvars
+  
+      - name: Initialising Terraform
+        if: ${{ !inputs.INIT_ROLE_ARN || inputs.INIT_ROLE_ARN == '' }}
+        working-directory: ${{ inputs.terraform-working-directory }}
+        run: |
+          terraform init \
+            -backend-config="region=${{ inputs.REGION }}" \
+            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
+            -backend-config="key=${{ inputs.workspace }}.tfstate"
 
       - name: Initialising Terraform
-        run: terraform init -reconfigure -backend-config="region=${{ inputs.REGION }}" -backend-config="bucket=${{ inputs.TF_BUCKET }}" -backend-config="key=${{ env.S3_PREFIX }}/${{ inputs.workspace }}.tfstate"
+        if: ${{ inputs.INIT_ROLE_ARN && inputs.INIT_ROLE_ARN != '' }}
+        working-directory: ${{ inputs.terraform-working-directory }}
+        run: |
+          terraform init \
+            -backend-config="region=${{ inputs.REGION }}" \
+            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
+            -backend-config="key=${{ inputs.workspace }}.tfstate" \
+            -backend-config="role_arn=${{ inputs.INIT_ROLE_ARN }}"
 
       - name: Validate Terraform configuration
+        working-directory: ${{ inputs.terraform-working-directory }}
         run: terraform validate
 
-      - name: Planning with workspaces
-        if: inputs.workspace
+      - name: Generate combined tfvars file
         run: |
+          # Create an empty combined tfvars file
+          COMBINED_TFVARS_PATH="${{ inputs.terraform-working-directory }}/combined.tfvars"
+          touch $COMBINED_TFVARS_PATH
+          
+          # Append terraform.tfvars if it exists
+          if [ -f "${{ inputs.terraform-working-directory }}/terraform.tfvars" ]; then
+            printf "\n# terraform.tfvars\n" >> $COMBINED_TFVARS_PATH
+            cat "${{ inputs.terraform-working-directory }}/terraform.tfvars" >> $COMBINED_TFVARS_PATH
+          fi
+          
+          # Append workspace-specific tfvars if it exists
+          if [ -f "${{ env.WORKSPACE_TFVARS_PATH }}" ]; then
+            printf "\n# Workspace-specific tfvars\n" >> $COMBINED_TFVARS_PATH
+            cat "${{ env.WORKSPACE_TFVARS_PATH }}" >> $COMBINED_TFVARS_PATH
+          fi
+          
+          # Append account-specific tfvars if it exists
+          if [ -f "${{ env.ACCOUNTS_TFVARS_PATH }}" ]; then
+            printf "\n# Account-specific tfvars\n" >> $COMBINED_TFVARS_PATH
+            cat "${{ env.ACCOUNTS_TFVARS_PATH }}" >> $COMBINED_TFVARS_PATH
+          fi
+          
+          # Append other tfvars if it exists
+          if [ -f "${{ env.OTHER_TFVARS }}" ]; then
+            printf "\n# Other tfvars\n" >> $COMBINED_TFVARS_PATH
+            cat "${{ env.OTHER_TFVARS }}" >> $COMBINED_TFVARS_PATH
+          fi
+          
+          # The combined.tfvars is now in $COMBINED_TFVARS_PATH
+          echo "Combined tfvars file created at $COMBINED_TFVARS_PATH"
+
+      - name: Planning
+        if: ${{ inputs.workspace }}
+        working-directory: ${{ inputs.terraform-working-directory }}
+        run: |
+          echo $GITHUB_WORKSPACE
+          cat combined.tfvars
           terraform workspace select -or-create ${{ inputs.workspace }}
-          terraform plan -var-file=terraform.tfvars -var-file="${{ env.WORKSPACE_TFVARS_PATH }}" -var-file="${{ env.ACCOUNTS_TFVARS_PATH }}" -var-file="${{ env.LZA_DEFAULT_TFVARS}}" -out=./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
-          terraform show -json ./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan > ./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan.json
+          terraform plan -var-file="combined.tfvars" \
+            -out=./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
+
+          # Convert the plan to JSON
+          terraform show -json ${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan > ${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan.json
 
       - name: Upload Plan
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.workspace }}-plan
-          path: "./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan"
+          path: "${{ inputs.terraform-working-directory }}/${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan"
           if-no-files-found: error
           overwrite: true
-
-      - name: Display Uploaded Artifacts
-        run: ls -R ./${{ env.OUTPUT_PATH }}
 
   terraform-apply:
     name: Apply Terraform
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true && inputs.apply
-    env:
-      OUTPUT_PATH: outputs/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}
-      WORKSPACE_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/${{ inputs.workspace }}.tfvars
-      ACCOUNTS_TFVARS_PATH: tenants/${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}/accounts.tfvars
-      LZA_DEFAULT_TFVARS_PATH: ${{ inputs.default_tfvars }}
-      S3_PREFIX: "${{ inputs.lza_environment }}/${{ inputs.tenant }}/${{ inputs.environment }}"
+    defaults:
+      run:
+        shell: bash
+    if: github.event.pull_request.merged == true && inputs.apply && !inputs.destroy
     steps:
       - uses: actions/checkout@v4
 
@@ -163,21 +244,110 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.workspace }}-plan
-          path: "./${{ env.OUTPUT_PATH }}/"
+          path:  "${{ inputs.terraform-working-directory }}/${{ env.OUTPUT_PATH }}"
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.RUN_ID }}
 
-      - name: Create terraform.tfvars file
-        run: echo '${{ inputs.parameters }}' >> terraform.tfvars
+      - name: Initialising Terraform
+        if: ${{ !inputs.INIT_ROLE_ARN || inputs.INIT_ROLE_ARN == '' }}
+        working-directory: ${{ inputs.terraform-working-directory }}
+        run: |
+          terraform init \
+            -backend-config="region=${{ inputs.REGION }}" \
+            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
+            -backend-config="key=${{ inputs.workspace }}.tfstate"
 
       - name: Initialising Terraform
-        run: terraform init -reconfigure -backend-config="region=${{ inputs.REGION }}" -backend-config="bucket=${{ inputs.TF_BUCKET }}" -backend-config="key=${{ env.S3_PREFIX }}/${{ inputs.workspace }}.tfstate"
+        if: ${{ inputs.INIT_ROLE_ARN && inputs.INIT_ROLE_ARN != '' }}
+        working-directory: ${{ inputs.terraform-working-directory }}
+        run: |
+          terraform init \
+            -backend-config="region=${{ inputs.REGION }}" \
+            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
+            -backend-config="key=${{ inputs.workspace }}.tfstate" \
+            -backend-config="role_arn=${{ inputs.INIT_ROLE_ARN }}"
 
       - name: Validate Terraform configuration
+        working-directory: ${{ inputs.terraform-working-directory }}
         run: terraform validate
-
+            
       - name: Applying with workspaces
+        working-directory: ${{ inputs.terraform-working-directory }}
         if: inputs.workspace
         run: |
           terraform workspace select -or-create ${{ inputs.workspace }}
           terraform apply ./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
+
+  terraform-destroy:
+    name: Destroying Terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    if: inputs.destroy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Configure AWS IdP Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ inputs.OIDC_ACCOUNT_ID}}:role/github-oidc
+          aws-region: ${{ inputs.REGION }}
+          role-session-name: GitHubActions
+          retry-max-attempts: 5
+
+      - name: Initialising Terraform
+        if: ${{ !inputs.INIT_ROLE_ARN || inputs.INIT_ROLE_ARN == '' }}
+        run: |
+          terraform init \
+            -backend-config="region=${{ inputs.REGION }}" \
+            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
+            -backend-config="key=${{ inputs.workspace }}.tfstate"
+
+      - name: Initialising Terraform
+        if: ${{ inputs.INIT_ROLE_ARN && inputs.INIT_ROLE_ARN != '' }}
+        run: |
+            terraform init \
+              -backend-config="region=${{ inputs.REGION }}" \
+              -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+              -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
+              -backend-config="key=${{ inputs.workspace }}.tfstate" \
+              -backend-config="role_arn=${{ inputs.INIT_ROLE_ARN }}"
+
+      - name: Validate Terraform configuration
+        run: terraform validate
+            
+      - name: Destroying
+        if: ${{ inputs.tenant && inputs.workspace }}
+        run: |
+          terraform workspace select -or-create ${{ inputs.workspace }}
+
+          VAR_FILES=""
+          
+          if [ -f "terraform.tfvars" ]; then
+            VAR_FILES="$VAR_FILES -var-file=terraform.tfvars"
+          fi
+          
+          if [ -f "${{ env.WORKSPACE_TFVARS_PATH }}" ]; then
+            VAR_FILES="$VAR_FILES -var-file=${{ env.WORKSPACE_TFVARS_PATH }}"
+          fi
+          
+          if [ -f "${{ env.ACCOUNTS_TFVARS_PATH }}" ]; then
+            VAR_FILES="$VAR_FILES -var-file=${{ env.ACCOUNTS_TFVARS_PATH }}"
+          fi
+          
+          if [ -f "${{ env.OTHER_TFVARS  }}" ]; then
+            VAR_FILES="$VAR_FILES -var-file=${{ env.OTHER_TFVARS }}"
+          fi
+          
+          # Run terraform plan with all available var files
+          terraform destroy -auto-approve $VAR_FILES

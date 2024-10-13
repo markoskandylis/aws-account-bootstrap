@@ -3,13 +3,13 @@ name: List Workspaces
 on:
   workflow_call:
     inputs:
-      lza_environment:
-        required: true
-        type: string
-      tenant:
+      tenant_name:
         required: false
         type: string
-      environment:
+      tenant_environment:
+        required: false
+        type: string
+      config_path:
         required: false
         type: string
     outputs:
@@ -34,8 +34,8 @@ jobs:
       - name: Extract workspaces
         id: extract-workspaces
         env:
-          LZA_ENVIRONMENT: ${{ inputs.lza_environment }}
-          TENANT_INPUT: ${{ inputs.tenant }}
-          ENVIRONMENT_INPUT: ${{ inputs.environment }}
+          tenant_name: ${{ inputs.tenant_name }}
+          tenant_environment: ${{ inputs.tenant_environment }}
+          config_path: ${{ inputs.config_path }}
         run: |
-          python3 bootstrap/list_workspaces.py
+          python3 bootstrap/matrix-generator.py

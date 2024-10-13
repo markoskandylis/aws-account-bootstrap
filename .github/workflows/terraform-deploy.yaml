@@ -1,6 +1,7 @@
 name: Bootstrap
 
 on:
+  workflow_dispatch: # Allows manual trigger from the GitHub UI or CLI
   pull_request:
     branches:
       - main
@@ -17,27 +18,60 @@ permissions:
   pull-requests: read
 
 jobs:
-  list-workspaces:
+  list-workspaces-platform:
     uses: ./.github/workflows/terraform-tenant-list.yaml
     with:
-      lza_environment: "lza"
-      environment: nonprod
+      tenant_name: "platform"
+      config_path: "./"
+      
 
-  terraform-deploy:
-    needs: list-workspaces
+  platform-account-bootstrap:
+    needs: [list-workspaces-platform]
     uses: ./.github/workflows/terraform-tenant-bootstap.yaml
     strategy:
       fail-fast: false
       matrix:
-        job: ${{ fromJson(needs.list-workspaces.outputs.matrix_jobs) }}
+        job: ${{ fromJson(needs.list-workspaces-platform.outputs.matrix_jobs) }}
     with:
-      lza_environment: "prod-lza"
+      terraform-working-directory: "./infrastructure"
+      workspace_key_prefix: "platform"
       tenant: ${{ matrix.job.tenant }}
-      environment: ${{ matrix.job.environment }}
+      environment: ${{ matrix.job.environment}}
       workspace: ${{ matrix.job.workspace }}
-      default_tfvars: "tenants/prod-lza/defaults.tfvars"
+      tfvars_path: ${{ matrix.job.tfvars_path}}
       plan: true
       apply: true
-      TF_BUCKET: ""
+      destroy: false
+      TF_BUCKET: "terraform-state"
       terraform_version: "1.9.0"
-      OIDC_ACCOUNT_ID: ""
+      OIDC_ACCOUNT_ID: "12345678910"
+
+  list-workspaces-tenants:
+    uses: ./.github/workflows/terraform-tenant-list.yaml
+    with:
+      config_path: "./tenants"
+      tenant_name: "Tenant1/Enclave-A"
+      tenant_environment: "prod"
+
+  tenants-account-bootstrap:
+    needs: [list-workspaces-tenants,platform-account-bootstrap]
+    uses: ./.github/workflows/terraform-tenant-bootstap.yaml
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJson(needs.list-workspaces-tenants.outputs.matrix_jobs) }}
+    with:
+      terraform-working-directory: "./infrastructure"
+      workspace_key_prefix: "tenants"
+      account-vars-base-directory: ./tenants
+      tenant: ${{ matrix.job.tenant }}
+      environment: ${{ matrix.job.environment}}
+      workspace: ${{ matrix.job.workspace }}
+      tfvars_path: ${{ matrix.job.tfvars_path}}
+      other_tfvars: ./tenants/defaults.tfvars
+      plan: true
+      apply: true
+      destroy: false
+      TF_BUCKET: "terraform-state"
+      terraform_version: "1.9.0"
+      OIDC_ACCOUNT_ID: "12345678910"
