@@ -84,7 +84,7 @@ on:
         required: false
 
 env:
-  OUTPUT_PATH: outputs/${{ inputs.tenant }}/${{ inputs.environment && '/' || '' }}${{ inputs.workspace }}
+  OUTPUT_PATH: ${{ inputs.environment != '' && format('outputs/{0}/{1}/{2}', inputs.tenant, inputs.environment, inputs.workspace) || format('outputs/{0}/{1}', inputs.tenant, inputs.workspace) }}
   WORKSPACE_TFVARS_PATH: ${{inputs.account-vars-base-directory}}/${{inputs.tfvars_path}}/${{ inputs.workspace }}.tfvars
   ACCOUNTS_TFVARS_PATH: ${{inputs.account-vars-base-directory}}/${{inputs.tfvars_path}}/accounts.tfvars
   OTHER_TFVARS: ${{ inputs.other_tfvars }}
@@ -114,39 +114,29 @@ jobs:
           role-session-name: GitHubActions
           retry-max-attempts: 5
 
-      - name: Create output folder
-        id: create_folder
-        run: mkdir -p ${{ inputs.terraform-working-directory }}/${{ env.OUTPUT_PATH }}
-
       - name: Create terraform.tfvars file
         if: inputs.parameters
         working-directory: ${{ inputs.terraform-working-directory }}
         run: echo '${{ inputs.parameters }}' >> terraform.tfvars
-  
-      - name: Initialising Terraform
-        if: ${{ !inputs.INIT_ROLE_ARN || inputs.INIT_ROLE_ARN == '' }}
-        working-directory: ${{ inputs.terraform-working-directory }}
-        run: |
-          terraform init \
-            -backend-config="region=${{ inputs.REGION }}" \
-            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
-            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
-            -backend-config="key=${{ inputs.workspace }}.tfstate"
 
-      - name: Initialising Terraform
-        if: ${{ inputs.INIT_ROLE_ARN && inputs.INIT_ROLE_ARN != '' }}
-        working-directory: ${{ inputs.terraform-working-directory }}
-        run: |
-          terraform init \
-            -backend-config="region=${{ inputs.REGION }}" \
-            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
-            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
-            -backend-config="key=${{ inputs.workspace }}.tfstate" \
-            -backend-config="role_arn=${{ inputs.INIT_ROLE_ARN }}"
+      - name: Set up Terraform Init
+        uses: ./.github/workflows/actions/terraform-init
+        with:
+          REGION: ${{ inputs.REGION }}
+          TF_BUCKET: ${{ inputs.TF_BUCKET }}
+          workspace: ${{ inputs.workspace }}
+          workspace_key_prefix: ${{ inputs.workspace_key_prefix }}
+          terraform_working_directory: ${{ inputs.terraform-working-directory }}
+          INIT_ROLE_ARN: ${{ inputs.INIT_ROLE_ARN }}
+          S3_PREFIX: ${{ env.S3_PREFIX }}
 
       - name: Validate Terraform configuration
         working-directory: ${{ inputs.terraform-working-directory }}
         run: terraform validate
+
+      - name: Create output folder
+        id: create_folder
+        run: mkdir -p ${{ inputs.terraform-working-directory }}/${{ env.OUTPUT_PATH }}
 
       - name: Generate combined tfvars file
         run: |
@@ -189,7 +179,7 @@ jobs:
           cat combined.tfvars
           terraform workspace select -or-create ${{ inputs.workspace }}
           terraform plan -var-file="combined.tfvars" \
-            -out=./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
+            -out=${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
 
           # Convert the plan to JSON
           terraform show -json ${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan > ${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan.json
@@ -248,26 +238,16 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ env.RUN_ID }}
 
-      - name: Initialising Terraform
-        if: ${{ !inputs.INIT_ROLE_ARN || inputs.INIT_ROLE_ARN == '' }}
-        working-directory: ${{ inputs.terraform-working-directory }}
-        run: |
-          terraform init \
-            -backend-config="region=${{ inputs.REGION }}" \
-            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
-            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
-            -backend-config="key=${{ inputs.workspace }}.tfstate"
-
-      - name: Initialising Terraform
-        if: ${{ inputs.INIT_ROLE_ARN && inputs.INIT_ROLE_ARN != '' }}
-        working-directory: ${{ inputs.terraform-working-directory }}
-        run: |
-          terraform init \
-            -backend-config="region=${{ inputs.REGION }}" \
-            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
-            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
-            -backend-config="key=${{ inputs.workspace }}.tfstate" \
-            -backend-config="role_arn=${{ inputs.INIT_ROLE_ARN }}"
+      - name: Set up Terraform Init
+        uses: ./.github/workflows/actions/terraform-init
+        with:
+          REGION: ${{ inputs.REGION }}
+          TF_BUCKET: ${{ inputs.TF_BUCKET }}
+          workspace: ${{ inputs.workspace }}
+          workspace_key_prefix: ${{ inputs.workspace_key_prefix }}
+          terraform_working_directory: ${{ inputs.terraform-working-directory }}
+          INIT_ROLE_ARN: ${{ inputs.INIT_ROLE_ARN }}
+          S3_PREFIX: ${{ env.S3_PREFIX }}
 
       - name: Validate Terraform configuration
         working-directory: ${{ inputs.terraform-working-directory }}
@@ -278,7 +258,7 @@ jobs:
         if: inputs.workspace
         run: |
           terraform workspace select -or-create ${{ inputs.workspace }}
-          terraform apply ./${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
+          terraform apply ${{ env.OUTPUT_PATH }}/${{ inputs.workspace }}-plan.tfplan
 
   terraform-destroy:
     name: Destroying Terraform
@@ -304,24 +284,16 @@ jobs:
           role-session-name: GitHubActions
           retry-max-attempts: 5
 
-      - name: Initialising Terraform
-        if: ${{ !inputs.INIT_ROLE_ARN || inputs.INIT_ROLE_ARN == '' }}
-        run: |
-          terraform init \
-            -backend-config="region=${{ inputs.REGION }}" \
-            -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
-            -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
-            -backend-config="key=${{ inputs.workspace }}.tfstate"
-
-      - name: Initialising Terraform
-        if: ${{ inputs.INIT_ROLE_ARN && inputs.INIT_ROLE_ARN != '' }}
-        run: |
-            terraform init \
-              -backend-config="region=${{ inputs.REGION }}" \
-              -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
-              -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ env.S3_PREFIX }}" \
-              -backend-config="key=${{ inputs.workspace }}.tfstate" \
-              -backend-config="role_arn=${{ inputs.INIT_ROLE_ARN }}"
+      - name: Set up Terraform Init
+        uses: ./.github/workflows/actions/terraform-init
+        with:
+          REGION: ${{ inputs.REGION }}
+          TF_BUCKET: ${{ inputs.TF_BUCKET }}
+          workspace: ${{ inputs.workspace }}
+          workspace_key_prefix: ${{ inputs.workspace_key_prefix }}
+          terraform_working_directory: ${{ inputs.terraform-working-directory }}
+          INIT_ROLE_ARN: ${{ inputs.INIT_ROLE_ARN }}
+          S3_PREFIX: ${{ env.S3_PREFIX }}
 
       - name: Validate Terraform configuration
         run: terraform validate

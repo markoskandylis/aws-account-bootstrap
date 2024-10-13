@@ -1,0 +1,58 @@
+name: 'Terraform Init'
+description: 'A composite action to initialize Terraform with optional role assumption'
+inputs:
+  workspace:
+    description: 'Workspace name to use for state file key'
+    required: true
+  workspace_key_prefix:
+    description: 'Key prefix for the S3 bucket in Terraform backend'
+    required: true
+  terraform_working_directory:
+    description: 'Directory containing Terraform configuration'
+    required: false
+    default: '.'
+  INIT_ROLE_ARN:
+    description: 'Optional role ARN to assume during initialization'
+    required: false
+    default: ''
+  S3_PREFIX:
+    description: 'S3 path prefix (optional, passed from main workflow)'
+    required: true
+  REGION:
+    description: 'The AWS region for the Terraform backend'
+    required: true
+  TF_BUCKET:
+    description: 'S3 bucket for Terraform state backend'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Init with Account Bucket
+      if: ${{ !inputs.INIT_ROLE_ARN || inputs.INIT_ROLE_ARN == '' }}
+      working-directory: ${{ inputs.terraform_working_directory }}
+      shell: bash
+      run: |
+        terraform init \
+          -backend-config="region=${{ inputs.REGION }}" \
+          -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+          -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ inputs.S3_PREFIX }}" \
+          -backend-config="key=${{ inputs.workspace }}.tfstate"
+
+    - name: Initializing Terraform with Assumed Role
+      if: ${{ inputs.INIT_ROLE_ARN && inputs.INIT_ROLE_ARN != '' }}
+      working-directory: ${{ inputs.terraform_working_directory }}
+      shell: bash
+      run: |
+        terraform init \
+          -backend-config="region=${{ inputs.REGION }}" \
+          -backend-config="bucket=${{ inputs.TF_BUCKET }}" \
+          -backend-config="workspace_key_prefix=${{ inputs.workspace_key_prefix }}/${{ inputs.S3_PREFIX }}" \
+          -backend-config="key=${{ inputs.workspace }}.tfstate" \
+          -backend-config="role_arn=${{ inputs.INIT_ROLE_ARN }}"

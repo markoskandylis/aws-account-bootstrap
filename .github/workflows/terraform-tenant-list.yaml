@@ -38,4 +38,4 @@ jobs:
           tenant_environment: ${{ inputs.tenant_environment }}
           config_path: ${{ inputs.config_path }}
         run: |
-          python3 bootstrap/matrix-generator.py
+          python3 bootstrap/list_workspaces.py

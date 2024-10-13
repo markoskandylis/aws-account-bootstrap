@@ -36,15 +36,15 @@ jobs:
       terraform-working-directory: "./infrastructure"
       workspace_key_prefix: "platform"
       tenant: ${{ matrix.job.tenant }}
-      environment: ${{ matrix.job.environment}}
+      environment: ${{ matrix.job.environment }}
       workspace: ${{ matrix.job.workspace }}
-      tfvars_path: ${{ matrix.job.tfvars_path}}
+      tfvars_path: ${{ matrix.job.tfvars_path }}
       plan: true
       apply: true
       destroy: false
-      TF_BUCKET: "terraform-state"
+      TF_BUCKET: "terraform-state-the-badger-project"
       terraform_version: "1.9.0"
-      OIDC_ACCOUNT_ID: "12345678910"
+      OIDC_ACCOUNT_ID: "283740801225"
 
   list-workspaces-tenants:
     uses: ./.github/workflows/terraform-tenant-list.yaml
@@ -65,13 +65,13 @@ jobs:
       workspace_key_prefix: "tenants"
       account-vars-base-directory: ./tenants
       tenant: ${{ matrix.job.tenant }}
-      environment: ${{ matrix.job.environment}}
+      environment: ${{ matrix.job.environment }}
       workspace: ${{ matrix.job.workspace }}
-      tfvars_path: ${{ matrix.job.tfvars_path}}
+      tfvars_path: ${{ matrix.job.tfvars_path }}
       other_tfvars: ./tenants/defaults.tfvars
       plan: true
       apply: true
       destroy: false
-      TF_BUCKET: "terraform-state"
+      TF_BUCKET: "terraform-state-the-badger-project"
       terraform_version: "1.9.0"
-      OIDC_ACCOUNT_ID: "12345678910"
+      OIDC_ACCOUNT_ID: "283740801225"
